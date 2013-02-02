@@ -1,4 +1,5 @@
 # blah!!!!!!!! 2/1/2013
+import os
 import sys
 
 WHITE=0
@@ -363,13 +364,41 @@ class GameState:
             newstate = self.applyMove(move)
             yield newstate, move
 
+class StateTree:
+    def __init__(self, state, parent=None, children=None):
+        self.node = state
+        self.parent = parent
+        self.children = children
+
+    def expand(self):
+        for newstate, move in self.node.step():
+            self.children.append( newstate )
 
 def main():
     initState = GameState()
     initState.board.display()
+    step1 = []
     for newstate, move in initState.step():
+        step1.append(newstate)
+    import random
+    random.shuffle(step1)
+    first = step1[0]
+    first.board.display()
+    print
+    step2 = []
+    for state2, move in first.step():
+        step2.append( state2 )
+    random.shuffle(step2)
+    second = step2[0]
+    second.board.display()
+    print
+    for state3, move in second.step():
+        os.system('cls')
+        second.board.display()
+        print
         print move.notation()
-        newstate.board.display()
+        state3.board.display()
+        raw_input()
 
 if __name__ == "__main__":
     main()
