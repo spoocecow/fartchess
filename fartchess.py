@@ -12,10 +12,11 @@ QUEEN=5
 KING=6
 
 xToChr = lambda x: chr(ord('A') + x)
+bPos = lambda x,y: xToChr(x) + str(y+1)
 
 class Piece:
 
-    names = {PAWN:   'p',
+    names = {PAWN:   'P',
              KNIGHT: 'N',
              BISHOP: 'B',
              ROOK:   'R',
@@ -32,7 +33,10 @@ class Piece:
         self.captured = False
 
     def __hash__(self):
-        return self.color ^ self.type ^ self.x ^ self.y
+        return self.color ^ self.type ^ hash( (self.x, self.y) )
+
+    def __eq__(self, other):
+        return self.color == other.color and self.type == other.type and self.x == other.x and self.y == other.y
 
     def coordinates(self):
         return self.x, self.y
@@ -40,23 +44,27 @@ class Piece:
     def typeMoves(self):
         # all conceivable moves, regardless of state
         # (impossible moves due to piece conflicts will be pruned later)
-        x, y = self.x, self.y
+        x,y = self.x, self.y
         if self.type == PAWN:
-            if self.type == WHITE: return (x,y+1), (x-1,y+1), (x+1,y+1)
-            else:                  return (x,y-1), (x-1,y-1), (x+1,y-1)
+            if self.color == WHITE: return [(x,y+1), (x-1,y+1), (x+1,y+1)] + ([(x,3)] if y == 1 else [])
+            else:                   return [(x,y-1), (x-1,y-1), (x+1,y-1)] + ([(x,4)] if y == 6 else [])
         elif self.type == KNIGHT:
             return [(x+dx, y+dy) for dx in (-2,-1,1,2) for dy in (-2,-1,1,2) if abs(dx)!=abs(dy)]
         elif self.type == BISHOP:
-            # TODO I'm dumb and this is wrong but I'm so sleepy
-            return x+1,y+1
-            return [(x+dx, y+dy) for dx in range(-7,8) for dy in range(7,8) if dx!=0 and dy!=0]
+            return [(x+d*dx, y+d*dy) for d in range(8) for dx in (-1,1) for dy in (-1,1)]
         elif self.type == ROOK:
-            return [(x+dx,y) for dx in range(-7,8) if dx!=0] + [(x,y+dy) for dy in range(-7,8) if dy!=0]
+            return [(x+d*dx,y) for d in range(8) for dx in (-1,1)] + [(x,y+d*dy) for d in range(8) for dy in (-1,1)]
         elif self.type == QUEEN:
-            # TODO also broke
-            return       [(x+dx,y) for dx in range(-7,8) if dx!=0] + [(x,y+dy) for dy in range(-7,8) if dy!=0]
+            return [(x+d*dx, y+d*dy) for d in range(8) for dx in (-1,1) for dy in (-1,1)] +\
+                   [(x+d*dx,y) for d in range(8) for dx in (-1,1)] + [(x,y+d*dy) for d in range(8) for dy in (-1,1)]
         elif self.type == KING:
-            return [(x+dx, y+dy) for dx in (-2,-1,0,1,2) for dy in (-1,0,1) if dx!=0 and dy!=0]
+            return [(x+dx, y+dy) for dx in (-1,0,1) for dy in (-1,0,1) if dx!=0 and dy!=0]
+            # I think we'll want to handle castling in the state... very state-dependent,
+            # and also moves the rook
+
+    def move(self, tox, toy):
+        self.x = tox
+        self.y = toy
 
     def isAttacking(self, state):
         # TBD move to state?
@@ -69,7 +77,7 @@ class Piece:
         pass
 
     def __str__(self):
-        return self.name + '(%c%d)' % (xToChr(self.x),self.y+1)
+        return self.name + bPos(*self.coordinates())
 
     def __repr__(self):
         return str(self)
@@ -177,6 +185,8 @@ class Move:
         self.piece = movingpiece
         self._from = movingpiece.coordinates()
         self._to = to
+        self.moveno = 0
+        self.capturing = None
 
     def source(self):
         return self._from
@@ -185,7 +195,12 @@ class Move:
         return self._to
 
     def notation(self):
-        return self.piece.asChr() + xToChr(self._to[0]) + str(self._to[1])
+        s = self.piece.asChr()
+        if self.capturing:
+            s += 'x' + bPos(*self.capturing.coordinates())
+        else:
+            s += bPos(*self._to)
+        return s
 
 class GameState:
     default_white = Pieces(WHITE,
@@ -254,10 +269,15 @@ class GameState:
                 if self.board[x][y].color == piece.color:
                     continue
             # if pawn diagonal move and not capture or en passant, invalid
-            # TODO
+            if piece.type == PAWN and piece.x != x and not self.board[x][y]:
+                # en passant todo
+                continue
             # if king castling and castle not allowed, invalid
-            # TODO
+            # TODO do this out of this loop
             # if square empty, but move passes through occupied square, and not knight, invalid
+            if not self.checkPathValid(piece, x, y):
+                #print "Can't move", piece, "to", bPos(x,y)
+                continue
             # TODO
             # if causes discovered check on king, invalid
             # TODO
@@ -265,28 +285,70 @@ class GameState:
                 continue
             yield Move(piece, move)
 
+    def checkPathValid(self, piece, tox, toy):
+        """make sure the move of `piece` to (tox,toy) doesn't collide with other pieces"""
+        sx,sy = piece.coordinates()
+        dx,dy = tox-sx, toy-sy
+        xstep = 1 if dx > 0 else -1
+        ystep = 1 if dy > 0 else -1
+        #print "Checking path of", piece, "moving (%d,%d) to %s" % (dx,dy, bPos(tox,toy))
+        if piece.type == KNIGHT: return True # knights jump :>
+        elif piece.type == PAWN:
+            if abs(dy) == 2: # if pawn jumping out two spaces
+                return self.board[tox][toy-1] is None if piece.color == WHITE else self.board[tox][toy+1] is None
+        elif piece.type == BISHOP:
+            for qx,qy in zip( range(sx+xstep,tox,xstep), range(sy+ystep,toy,ystep) ):
+                if self.board[qx][qy]: return False
+        elif piece.type == ROOK:
+            if dx != 0:
+                for qx in range(sx+xstep, tox, xstep):
+                    print "board[%d][%d] = %s" % (qx, sy, self.board[qx][sy])
+                    if self.board[qx][sy]: return False
+            elif dy != 0:
+                for qy in range(sy+ystep, toy, ystep):
+                    print "board[%d][%d] = %s" % (sx, qy, self.board[sx][qy])
+                    if self.board[sx][qy]: return False
+        elif piece.type == QUEEN:
+            for qx,qy in zip( range(sx+xstep,tox,xstep), range(sy+ystep,toy,ystep) ):
+                if self.board[qx][qy]: return False
+            if dx != 0:
+                for qx in range(sx+xstep, tox, xstep):
+                    if self.board[qx][sy]: return False
+            elif dy != 0:
+                for qy in range(sy+ystep, toy, ystep):
+                    if self.board[sx][qy]: return False
+        return True
+
     def allPossibleMoves(self):
         if self.turn == WHITE:
             collection = self.whitePieces
         else:
             collection = self.blackPieces
         for piece in collection:
+            print "Generating moves for", piece
             for move in self.possibleMovesByPiece(piece):
                 yield move
 
     def applyMove(self, move):
         sx,sy = move.source()
-        mx,my = move.destination()
+        assert self.board[sx][sy], "Moving piece that isn't on board"
+        assert self.board[sx][sy] == move.piece, "board/move consistency"
         movingPiece = move.piece
         assert movingPiece.color == self.turn, "applying move to piece of wrong color: " + str(movingPiece.color) + ' ' + str(self.turn)
-        active  = self.whitePieces.copy() if movingPiece.type == WHITE else self.blackPieces.copy()
-        passive = self.whitePieces.copy() if movingPiece.type == BLACK else self.blackPieces.copy()
+        active  = self.whitePieces.copy() if movingPiece.color == WHITE else self.blackPieces.copy()
+        passive = self.whitePieces.copy() if movingPiece.color == BLACK else self.blackPieces.copy()
+
+        assert active.byPos(sx,sy) == movingPiece, "piece set consistency: %s v %s" % (active.byPos(sx,sy), movingPiece)
+        movingPiece = active.byPos(sx,sy) # switch ptr from Move out for copy
+        mx,my = move.destination()
         if self.board[mx][my]:
             # capture!
             capturedPiece = self.board[mx][my]
             assert movingPiece.color != capturedPiece.color, "Capturing own piece: %s capturing %s" % (movingPiece, capturedPiece)
             print movingPiece, "capturing", capturedPiece
             passive.rmPiece(capturedPiece)
+            move.capturing = capturedPiece
+        print "Moving", movingPiece, "to", bPos(mx,my)
         active.rmPiece(movingPiece)
         movingPiece.move(mx,my)
         active.addPiece(movingPiece)
