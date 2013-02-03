@@ -1,6 +1,7 @@
 # blah!!!!!!!! 2/1/2013
 import os
 import sys
+import random
 
 WHITE=0
 BLACK=1
@@ -138,6 +139,7 @@ class Pieces:
 
     def rmPiece(self, piece):
         self._all.remove(piece)
+        if piece.type == KING: self.king = None
 
     def __iter__(self):
         return iter(self._all)
@@ -196,7 +198,8 @@ class Move:
         return self._to
 
     def notation(self):
-        s = self.piece.asChr()
+        s = str(self.moveno) + '. '
+        s += self.piece.asChr()
         if self.capturing:
             s += 'x' + bPos(*self.capturing.coordinates())
         else:
@@ -253,7 +256,7 @@ class GameState:
             self.blackPieces = blackpieces
         self.board.placePieces(self.whitePieces, self.blackPieces)
         self.turn = turn
-        self.playno = 0
+        self.moveno = 0
 
     def possibleMovesByPiece(self, piece):
         allmoves = piece.typeMoves()
@@ -353,6 +356,8 @@ class GameState:
         active.rmPiece(movingPiece)
         movingPiece.move(mx,my)
         active.addPiece(movingPiece)
+        self.moveno += 1
+        move.moveno = self.moveno
         if self.turn == WHITE:
             return GameState(active, passive, BLACK)
         else:
@@ -365,40 +370,44 @@ class GameState:
             yield newstate, move
 
 class StateTree:
-    def __init__(self, state, parent=None, children=None):
+    def __init__(self, state, parent=None):
         self.node = state
         self.parent = parent
-        self.children = children
+        self.children = []
 
     def expand(self):
         for newstate, move in self.node.step():
+            node = StateTree(newstate, parent=self)
             self.children.append( newstate )
+
+    def travel(self, depth=5):
+        while depth > 0:
+            self.expand()
+            for child in self.children:
+                child.travel(depth-1)
 
 def main():
     initState = GameState()
     initState.board.display()
-    step1 = []
-    for newstate, move in initState.step():
-        step1.append(newstate)
-    import random
-    random.shuffle(step1)
-    first = step1[0]
-    first.board.display()
-    print
-    step2 = []
-    for state2, move in first.step():
-        step2.append( state2 )
-    random.shuffle(step2)
-    second = step2[0]
-    second.board.display()
-    print
-    for state3, move in second.step():
-        os.system('cls')
-        second.board.display()
-        print
-        print move.notation()
-        state3.board.display()
-        raw_input()
+    input = 'x'
+    thisstate = initState
+    prevstate = initState
+    while input.lower() != 'q':
+        thisstep = []
+        for newstate, move in thisstate.step():
+            thisstep.append(newstate)
+        choice = random.choice(thisstep)
+        while True:
+            os.system('cls')
+            prevstate.board.display()
+            print
+            choice.board.display()
+            input = raw_input('(c)ontinue, (o)ther move, (q)uit: ').lower()
+            if input == 'q': break
+            elif input == 'o': choice = random.choice(thisstep)
+            else: break
+        prevstate = thisstate
+        thisstate = choice
 
 if __name__ == "__main__":
     main()
